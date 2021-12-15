@@ -1,6 +1,7 @@
-fn sex() {
-	data Sex<T> {
-		sex: The,
-		the: Sex<T>
-	}
+fn funny() {
+	data Funny {}
+}
+
+fn lol() {
+
 }

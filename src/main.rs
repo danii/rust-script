@@ -1,6 +1,6 @@
 use std::iter::Peekable;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 enum Token {
 	Identifier(Box<str>),
 	KeywordFN,
@@ -78,10 +78,101 @@ impl<I> Iterator for Tokenizer<I>
 	}
 }
 
+#[derive(Debug)]
+enum DataItem {
+	Single(DataVariant),
+	Multiple {
+		name: Box<str>,
+		variants: Vec<DataVariant>
+	}
+}
+
+#[derive(Debug)]
+enum DataVariant {
+	Marker {
+		name: Box<str>
+	},
+	Tuple {
+		name: Box<str>,
+		fields: Vec<Box<str>>
+	},
+	Struct {
+		name: Box<str>,
+		fields: Vec<(Box<str>, Box<str>)>
+	}
+}
+
+#[derive(Debug)]
+struct FunctionItem {
+	name: Box<str>,
+	arguments: Vec<(Box<str>, Box<str>)>,
+	body: Vec<Statement>
+}
+
+#[derive(Debug)]
+enum Statement {
+	DataItem(DataItem),
+	FunctionItem(FunctionItem),
+	Expression(Expression)
+}
+
+#[derive(Debug)]
+enum Expression {}
+
+struct Parser<I>(Peekable<I>)
+	where I: Iterator<Item = Token>;
+
+impl<I> Parser<I>
+		where I: Iterator<Item = Token> {
+	fn next_function(&mut self) -> Option<FunctionItem> {
+		assert_eq!(self.0.next(), Some(Token::KeywordFN));
+		let name = if let Some(Token::Identifier(name)) = self.0.next() {name}
+			else {return None};
+		assert_eq!(self.0.next(), Some(Token::ParenLeft));
+		assert_eq!(self.0.next(), Some(Token::ParenRight));
+
+		assert_eq!(self.0.next(), Some(Token::BraceLeft));
+		let mut body = Vec::new();
+		while let Some(statement) = self.next() {body.push(statement)}
+		assert_eq!(self.0.next(), Some(Token::BraceRight));
+
+		Some(FunctionItem {
+			name,
+			arguments: Vec::new(),
+			body
+		})
+	}
+
+	fn next_data(&mut self) -> Option<DataItem> {
+		assert_eq!(self.0.next(), Some(Token::KeywordData));
+		let name = if let Some(Token::Identifier(name)) = self.0.next() {name}
+			else {return None};
+		assert_eq!(self.0.next(), Some(Token::BraceLeft));
+		assert_eq!(self.0.next(), Some(Token::BraceRight));
+
+		Some(DataItem::Single(DataVariant::Struct {name, fields: Vec::new()}))
+	}
+}
+
+impl<I> Iterator for Parser<I>
+		where I: Iterator<Item = Token> {
+	type Item = Statement;
+
+	fn next(&mut self) -> Option<Statement> {
+		Some(match self.0.peek()? {
+			Token::KeywordFN => Statement::FunctionItem(self.next_function()?),
+			Token::KeywordData => Statement::DataItem(self.next_data()?),
+			_ => return None
+		})
+	}
+}
+
 const X: &str = include_str!("main.rsst");
 
 fn main() {
-	let t = Tokenizer(X.chars().peekable());
+	let t = Parser(Tokenizer(X.chars().peekable()).peekable());
+
+	4;
 
 	for x in t {
 		println!("{:?}", x);
