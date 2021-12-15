@@ -1,7 +1,4 @@
-fn funny() {
-	data Funny {}
-}
-
-fn lol() {
-
+data Funny {
+	field: The,
+	wow: Funny
 }

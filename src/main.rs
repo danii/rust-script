@@ -147,10 +147,50 @@ impl<I> Parser<I>
 		assert_eq!(self.0.next(), Some(Token::KeywordData));
 		let name = if let Some(Token::Identifier(name)) = self.0.next() {name}
 			else {return None};
+
 		assert_eq!(self.0.next(), Some(Token::BraceLeft));
+		let mut fields = Vec::new();
+		match self.0.peek()? {
+			Token::Identifier(_) => {
+				let name = {
+					let v = self.0.next();
+					match v {
+						Some(Token::Identifier(v)) => v,
+						_ => unreachable!()
+					}
+				};
+
+				assert_eq!(self.0.next(), Some(Token::Colon));
+				let r#type = if let Some(Token::Identifier(r#type)) = self.0.next() {r#type}
+					else {return None};
+				fields.push((name, r#type));
+
+				loop {
+					match self.0.peek()? {
+						Token::Comma => {
+							self.0.next();
+							let name = {
+								let v = self.0.next();
+								match v {
+									Some(Token::Identifier(v)) => v,
+									_ => unreachable!()
+								}
+							};
+		
+							assert_eq!(self.0.next(), Some(Token::Colon));
+							let r#type = if let Some(Token::Identifier(r#type)) = self.0.next() {r#type}
+								else {return None};
+							fields.push((name, r#type));
+						},
+						_ => break
+					}
+				}
+			},
+			_ => ()
+		}
 		assert_eq!(self.0.next(), Some(Token::BraceRight));
 
-		Some(DataItem::Single(DataVariant::Struct {name, fields: Vec::new()}))
+		Some(DataItem::Single(DataVariant::Struct {name, fields}))
 	}
 }
 
@@ -167,14 +207,57 @@ impl<I> Iterator for Parser<I>
 	}
 }
 
+fn join<I, S>(iterator: I, join: impl AsRef<str>) -> String
+		where I: Iterator<Item = S>, S: AsRef<str> {
+	iterator.enumerate()
+		.fold(String::new(), |mut joined, (index, value)| {
+			if index != 0 {joined.push_str(join.as_ref())}
+			joined.push_str(value.as_ref());
+			joined
+		})
+}
+
+fn transpile<I>(iterator: I) -> String
+		where I: Iterator<Item = Statement> {
+	let mut output = String::new();
+
+	for statement in iterator {
+		match statement {
+			Statement::DataItem(DataItem::Single(variant)) => {
+				let values;
+				let name = match variant {
+					DataVariant::Marker {name} => {
+						values = Vec::new();
+						name
+					},
+					DataVariant::Tuple {name, fields} => {
+						values = fields.into_iter().enumerate().map(|(index, _)| format!("_{}", index).into()).collect();
+						name
+					},
+					DataVariant::Struct {name, fields} => {
+						values = fields.into_iter().map(|(name, _)| name).collect();
+						name
+					}
+				};
+
+				let arguments = join(values.iter(), ", ");
+				let constructor = join(values.iter().map(|name| format!("this.{0} = {0};", name)), "\n\t\t");
+				output.push_str(&format!(r#"class {} {{
+	constructor({}) {{
+		{}
+	}}
+}}"#, name, arguments, constructor));
+			},
+			_ => todo!()
+		}
+	}
+
+	output
+}
+
 const X: &str = include_str!("main.rsst");
 
 fn main() {
-	let t = Parser(Tokenizer(X.chars().peekable()).peekable());
-
-	4;
-
-	for x in t {
-		println!("{:?}", x);
-	}
+	let output = transpile(Parser(Tokenizer(X.chars().peekable()).peekable()));
+	println!("{}", output);
 }
