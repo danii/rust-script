@@ -1,0 +1,6 @@
+fn sex() {
+	data Sex<T> {
+		sex: The,
+		the: Sex<T>
+	}
+}
