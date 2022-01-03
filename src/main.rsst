@@ -1,4 +1,6 @@
-data Funny {
-	field: The,
-	wow: Funny
+data A {
+	field: B,
+	wow: C
 }
+
+data B(C);
