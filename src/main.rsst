@@ -4,3 +4,12 @@ data A {
 }
 
 data B(C);
+
+data C;
+
+data D {
+	A {
+		p: B
+	},
+	B(A)
+}
