@@ -3,6 +3,10 @@ data A {
 	wow: C
 }
 
+data R {
+	lol: B
+}
+
 data B(C);
 
 data C;
@@ -17,7 +21,7 @@ data D {
 let x: i = 7;
 
 fn my_function() {
-	data Local(C);
+	data Local;
 
 	let x: i = 2;
 }

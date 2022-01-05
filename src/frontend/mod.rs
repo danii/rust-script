@@ -2,14 +2,13 @@ pub mod tokenizer;
 pub mod parser;
 
 use parser::{Block, DataItem, DataVariant, Statement};
-use std::{collections::HashMap, marker::PhantomData, ops::Add};
+use std::{collections::{HashMap, HashSet}, marker::PhantomData};
 
 pub type IStr<'s> = (PhantomData<&'s ()>, Box<str>);
 
 #[derive(Debug)]
 pub enum Type<'s> {
 	User {
-		name: IStr<'s>,
 		format: DataFormat<'s>
 	},
 	Integer
@@ -19,32 +18,22 @@ pub enum Type<'s> {
 pub enum GenericFormat<'s, V> {
 	Marker,
 	Unnamed {
-		fields: HashMap<usize, usize>
+		fields: Vec<IStr<'s>>
 	},
 	Named {
-		fields: HashMap<usize, StructField<'s>>,
+		fields: HashMap<IStr<'s>, IStr<'s>>,
 		variants: V
 	}
 }
 
 pub type DataFormat<'s> =
-	GenericFormat<'s, HashMap<usize, EnumVariantFormat<'s>>>;
+	GenericFormat<'s, HashMap<IStr<'s>, EnumVariantFormat<'s>>>;
 
-#[derive(Debug)]
-pub struct EnumVariantFormat<'s> {
-	name: IStr<'s>,
-	format: GenericFormat<'s, ()>
-}
-
-#[derive(Debug)]
-pub struct StructField<'s> {
-	name: IStr<'s>,
-	r#type: usize
-}
+type EnumVariantFormat<'s> =
+	GenericFormat<'s, ()>;
 
 #[derive(Debug)]
 pub struct Function<'s> {
-	name: IStr<'s>,
 	code: Code<'s>
 }
 
@@ -53,105 +42,121 @@ pub struct Code<'s> {
 	scope: Scope<'s>
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Scope<'s> {
-	types: HashMap<usize, Type<'s>>,
-	functions: HashMap<usize, Function<'s>>
+	types: HashMap<IStr<'s>, Type<'s>>,
+	functions: HashMap<IStr<'s>, Function<'s>>
 }
 
-trait Identifier: Copy {
-	type Representation: Add<Output = Self::Representation> + Copy;
-
-	const ONE: Self::Representation;
-	const ZERO: Self::Representation;
-
-	fn build(representation: Self::Representation) -> Self;
-}
-
-impl Identifier for usize {
-	type Representation = usize;
-
-	const ONE: usize = 1;
-	const ZERO: usize = 0;
-
-	fn build(representation: usize) -> Self {
-		representation
+impl<'s> Scope<'s> {
+	pub fn new() -> Self {
+		Default::default()
 	}
 }
 
-struct IDBuilder<T>(T::Representation)
-	where T: Identifier;
+#[derive(Clone, Copy, Debug)]
+// TODO: This type is outdated (and I wrote it like an hour ago lmao).
+pub struct ScopeRef<'l, 'o, 's> {
+	local: &'l Scope<'s>,
+	outer: Option<&'o ScopeRef<'o, 'o, 's>>
+}
 
-impl<T> IDBuilder<T>
-		where T: Identifier {
-	fn new() -> Self {
-		Self(T::ZERO)
+impl<'l, 'o, 's> ScopeRef<'l, 'o, 's> {
+	pub fn new(local: &'l Scope<'s>) -> Self {
+		Self {local, outer: None}
 	}
 
-	fn next(&mut self) -> T {
-		let id = T::build(self.0);
-		self.0 = self.0 + T::ONE;
-		id
+	pub fn r#in(&'o self, local: &'l Scope<'s>) -> Self {
+		Self {local, outer: Some(self)}
+	}
+
+	pub fn has_type(&self, r#type: &IStr<'s>) -> bool {
+		self.local.types.contains_key(r#type)
+			|| self.outer.map(|scope| scope.has_type(r#type)).unwrap_or_default()
 	}
 }
 
-pub fn construct_main_representation(block: &Block) -> Code<'static> {
-	// Identify types.
-	let mut type_ids = IDBuilder::<usize>::new();
-	let types: HashMap<_, _> = block.0.iter()
+pub fn construct_main_representation(block: &Block, scope: ScopeRef) -> Code<'static> {
+	// Only used to verify that named types exist; types declared at the end of
+	// the file may be used at the beginning of the same file.
+	let type_names: HashSet<_> = block.0.iter()
 		.filter_map(Statement::data_item_ref)
-		.map(|data| (data.name(), (type_ids.next(), data)))
+		.map(|data| data.name())
 		.collect();
 
-	// Identify field types.
-	let types = types.values()
-		.map(|(id, data)| (
-			*id,
-			match data {
+	// Process types.
+	let types = block.0.iter()
+		.filter_map(Statement::data_item_ref)
+		.fold(HashMap::new(), |mut types, data| {
+			let name = (PhantomData, data.name().into());
+			let r#type = match data {
 				DataItem::Single(variant) => {
 					let (name, format) =
-						construct_data_representation(variant, &types);
-					Type::User {name, format}
+						construct_data_representation(variant, scope, &type_names);
+					Type::User {format}
 				},
 
 				DataItem::Multiple {name, variants} => {
-					let mut variant_ids = IDBuilder::<usize>::new();
 					let variants = variants.iter()
-						.map(|variant| {
+						.fold(HashMap::new(), |mut variants, variant| {
 							let (name, format) =
-								construct_data_representation(variant, &types);
-							(variant_ids.next(), EnumVariantFormat {name, format})
-						})
-						.collect();
+								construct_data_representation(variant, scope, &type_names);
+
+							// Variant Duplication Checks
+							// TODO: Remove clone when IStr becomes an identifier.
+							if variants.insert(name.clone(), format).is_some()
+								{panic!("duplicate variant {:?}", name)}
+
+							variants
+						});
 
 					Type::User {
-						name: (PhantomData, name.clone()),
 						format: DataFormat::Named {
 							fields: HashMap::new(),
 							variants
 						}
 					}
 				}
-			}
-		))
+			};
+
+			// Type Duplication Checks
+			// TODO: Remove clone when IStr becomes an identifier.
+			if types.insert(name.clone(), r#type).is_some()
+				{panic!("duplicate type {:?}", name)}
+
+			types
+		});
+
+	// Same deal as type_names.
+	// TODO: How do we compile multiple files together???
+	let function_names: HashSet<_> = block.0.iter()
+		.filter_map(Statement::function_item_ref)
+		.map(|function| &*function.name)
 		.collect();
 
-	// Identify functions.
-	let mut function_ids = IDBuilder::new();
+	// Process functions.
 	let functions = block.0.iter()
 		.filter_map(Statement::function_item_ref)
-		.map(|function| Function {
-			name: (PhantomData, function.name.clone()),
-			code: construct_main_representation(&function.body)
-		})
-		.map(|function| (function_ids.next(), function))
-		.collect();
+		.fold(HashMap::new(), |mut functions, function| {
+			let name = (PhantomData, function.name.clone());
+			// TODO: Fix scoping.
+			let function = Function {
+				code: construct_main_representation(&function.body, scope)
+			};
+
+			// Function Duplication Checks
+			// TODO: Remove clone when IStr becomes an identifier.
+			if functions.insert(name.clone(), function).is_some()
+				{panic!("duplicate type {:?}", name)}
+
+			functions
+		});
 
 	Code {scope: Scope {types, functions}}
 }
 
 pub fn construct_data_representation<V>(variant: &DataVariant,
-		types: &HashMap<&str, (usize, &DataItem)>)
+		scope: ScopeRef, type_names: &HashSet<&str>)
 			-> (IStr<'static>, GenericFormat<'static, V>) where V: Default {
 	match variant {
 		DataVariant::Marker {name} => (
@@ -160,10 +165,16 @@ pub fn construct_data_representation<V>(variant: &DataVariant,
 		),
 
 		DataVariant::Tuple {name, fields} => {
-			let mut field_ids = IDBuilder::<usize>::new();
-			let fields = fields.iter()
-				.map(|r#type| (field_ids.next(),
-					types.get(&**r#type).expect("unknown type").0))
+			let fields: Vec<_> = fields.iter()
+				.map(|r#type| {
+					let r#type = (PhantomData, r#type.clone());
+
+					// Type Reference Checks
+					if !scope.has_type(&r#type) && !type_names.contains(&*r#type.1)
+						{panic!("unknown type {:?}", r#type)}
+
+					r#type
+				})
 				.collect();
 
 			(
@@ -173,16 +184,20 @@ pub fn construct_data_representation<V>(variant: &DataVariant,
 		},
 
 		DataVariant::Struct {name, fields} => {
-			let mut field_ids = IDBuilder::<usize>::new();
 			let fields = fields.iter()
-				.map(|(name, r#type)| (
-					field_ids.next(),
-					StructField {
-						name: (PhantomData, name.clone()),
-						r#type: types.get(&**r#type).expect("unknown type").0
-					}
-				))
-				.collect();
+				.fold(HashMap::new(), |mut fields, (name, r#type)| {
+					let r#type = (PhantomData, r#type.clone());
+					let name = (PhantomData, name.clone());
+
+					// Type Reference & Field Duplication Checks
+					if !scope.has_type(&r#type) && !type_names.contains(&*r#type.1)
+						{panic!("unknown type {:?}", r#type)}
+					// TODO: Remove clone when IStr becomes an identifier.
+					if fields.insert(name.clone(), r#type).is_some()
+						{panic!("duplicate field {:?}", name)}
+
+					fields
+				});
 
 			(
 				(PhantomData, name.clone()),
