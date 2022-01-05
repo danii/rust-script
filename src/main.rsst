@@ -13,3 +13,11 @@ data D {
 	},
 	B(A)
 }
+
+let x: i = 7;
+
+fn my_function() {
+	data Local(C);
+
+	let x: i = 2;
+}

@@ -3,8 +3,14 @@ use std::iter::Peekable;
 #[derive(Debug, PartialEq, Eq)]
 pub enum Token {
 	Identifier(Box<str>),
+
 	KeywordFn,
 	KeywordData,
+	KeywordLet,
+
+	LiteralNumber(Box<str>),
+	LiteralTrue,
+	LiteralFalse,
 
 	ParenLeft,
 	ParenRight,
@@ -18,7 +24,9 @@ pub enum Token {
 	Period,
 	Comma,
 	Colon,
-	SemiColon
+	SemiColon,
+
+	Equals
 }
 
 pub struct Tokenizer<I>(pub Peekable<I>)
@@ -40,6 +48,7 @@ impl<I> Tokenizer<I>
 	}
 
 	/// Eats a character, and returns the provided value.
+	#[must_use = "if you do not need to return something, use eat"]
 	fn eat_return<T>(&mut self, r#return: T) -> T {
 		self.eat();
 		r#return
@@ -79,15 +88,25 @@ impl<I> Tokenizer<I>
 
 	fn parse_identifier(&mut self) -> Token {
 		let mut name = String::new();
-		while let Some('a'..='z' | 'A'..='Z') = self.peek()
-			{name.push(self.next().unwrap())}
+		while let Some('a'..='z' | 'A'..='Z' | '_') = self.peek()
+			{name.push(self.peeked_next())}
 
 		let name = Box::<str>::from(name);
 		match &*name {
 			"fn" => Token::KeywordFn,
 			"data" => Token::KeywordData,
+			"let" => Token::KeywordLet,
+			"true" => Token::LiteralTrue,
+			"false" => Token::LiteralFalse,
 			_ => Token::Identifier(name)
 		}
+	}
+
+	fn parse_number(&mut self) -> Token {
+		let mut number = String::new();
+		while let Some('0'..='9') = self.peek()
+			{number.push(self.peeked_next())}
+		Token::LiteralNumber(Box::from(number))
 	}
 }
 
@@ -97,7 +116,8 @@ impl<I> Iterator for Tokenizer<I>
 
 	fn next(&mut self) -> Option<Token> {
 		Some(match self.parse_whitespace()? {
-			'a'..='z' | 'A'..='Z' => self.parse_identifier(),
+			'a'..='z' | 'A'..='Z' | '_' => self.parse_identifier(),
+			'0'..='9' => self.parse_number(),
 
 			'(' => self.eat_return(Token::ParenLeft),
 			')' => self.eat_return(Token::ParenRight),
@@ -113,7 +133,9 @@ impl<I> Iterator for Tokenizer<I>
 			':' => self.eat_return(Token::Colon),
 			';' => self.eat_return(Token::SemiColon),
 
-			_ => todo!()
+			'=' => self.eat_return(Token::Equals),
+
+			token => todo!("add failiure code; failed on token {:?}", token)
 		})
 	}
 }

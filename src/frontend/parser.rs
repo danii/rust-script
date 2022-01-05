@@ -8,11 +8,37 @@ pub struct Block(pub Vec<Statement>);
 pub enum Statement {
 	DataItem(DataItem),
 	FunctionItem(FunctionItem),
+	LetItem(LetItem),
 	Expression(Expression)
 }
 
+impl Statement {
+	pub fn data_item_ref(&self) -> Option<&DataItem> {
+		match self {
+			Self::DataItem(item) => Some(item),
+			_ => None
+		}
+	}
+
+	pub fn function_item_ref(&self) -> Option<&FunctionItem> {
+		match self {
+			Self::FunctionItem(item) => Some(item),
+			_ => None
+		}
+	}
+}
+
 #[derive(Debug)]
-pub enum Expression {}
+pub enum Expression {
+	Block(Block),
+	LiteralInteger(Box<str>),
+	LiteralBoolean(bool),
+
+	FunctionCall {
+		name: Box<str>,
+		arguments: Vec<Expression>
+	}
+}
 
 #[derive(Clone, Debug)]
 pub enum DataItem {
@@ -64,6 +90,12 @@ pub struct FunctionItem {
 	pub body: Block
 }
 
+#[derive(Debug)]
+pub struct LetItem {
+	pub name: Box<str>,
+	pub r#type: Box<str>,
+	pub expression: Expression
+}
 
 pub struct Parser<I>(pub Peekable<I>)
 	where I: Iterator<Item = Token>;
@@ -85,10 +117,26 @@ impl<I> Parser<I>
 		}
 	}
 
+	/// Eats a character, and returns the provided value.
+	#[must_use = "if you do not need to return something, use eat"]
+	fn eat_return<T>(&mut self, r#return: T) -> T {
+		self.eat();
+		r#return
+	}
+
 	#[must_use = "all tokens should be consumed"]
 	fn eat_identifier(&mut self) -> Box<str> {
 		match self.next() {
 			Some(Token::Identifier(name)) => name,
+			Some(_) => unreachable!("called eat_identifier when an identifier wasn't next"),
+			None => unreachable!("called eat_identifier when there wasn't anything next")
+		}
+	}
+
+	#[must_use = "all tokens should be consumed"]
+	fn eat_literal_number(&mut self) -> Box<str> {
+		match self.next() {
+			Some(Token::LiteralNumber(number)) => number,
 			Some(_) => unreachable!("called eat_identifier when an identifier wasn't next"),
 			None => unreachable!("called eat_identifier when there wasn't anything next")
 		}
@@ -112,6 +160,8 @@ impl<I> Parser<I>
 					Statement::FunctionItem(self.parse_function()),
 				Some(Token::KeywordData) =>
 					Statement::DataItem(self.parse_data()),
+				Some(Token::KeywordLet) =>
+					Statement::LetItem(self.parse_let()),
 				_ => break Block(statements),
 			})
 		}
@@ -318,6 +368,56 @@ impl<I> Parser<I>
 			// Marker Struct
 			Some(Token::SemiColon) =>
 				DataItem::Single(DataVariant::Marker {name}),
+
+			_ => unimplemented!()
+		}
+	}
+
+	pub fn parse_let(&mut self) -> LetItem {
+		assert_eq!(self.next(), Some(Token::KeywordLet));
+		let name = self.eat_identifier();
+		assert_eq!(self.next(), Some(Token::Colon));
+		let r#type = self.eat_identifier();
+		assert_eq!(self.next(), Some(Token::Equals));
+		let expression = self.parse_expression();
+		assert_eq!(self.next(), Some(Token::SemiColon));
+
+		LetItem {name, r#type, expression}
+	}
+
+	pub fn parse_expression(&mut self) -> Expression {
+		match self.peek().unwrap() {
+			Token::BraceLeft => {
+				self.eat();
+				let block = self.parse_block();
+				assert_eq!(self.next(), Some(Token::BraceRight));
+
+				Expression::Block(block)
+			},
+
+			Token::LiteralNumber(_) =>
+				Expression::LiteralInteger(self.eat_literal_number()),
+			Token::LiteralTrue =>
+				self.eat_return(Expression::LiteralBoolean(true)),
+			Token::LiteralFalse =>
+				self.eat_return(Expression::LiteralBoolean(false)),
+
+			Token::Identifier(_) => {
+				let actor = self.eat_identifier();
+				match self.peek().unwrap() {
+					Token::ParenLeft => {
+						// TODO: Arguments.
+						assert_eq!(self.next(), Some(Token::ParenRight));
+
+						Expression::FunctionCall {
+							name: actor,
+							arguments: Vec::new()
+						}
+					},
+
+					_ => todo!("add identifier reference")
+				}
+			},
 
 			_ => unimplemented!()
 		}

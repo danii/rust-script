@@ -7,9 +7,12 @@ use std::{collections::HashMap, marker::PhantomData, ops::Add};
 pub type IStr<'s> = (PhantomData<&'s ()>, Box<str>);
 
 #[derive(Debug)]
-pub struct Type<'s> {
-	name: IStr<'s>,
-	format: DataFormat<'s>
+pub enum Type<'s> {
+	User {
+		name: IStr<'s>,
+		format: DataFormat<'s>
+	},
+	Integer
 }
 
 #[derive(Debug)]
@@ -39,11 +42,18 @@ pub struct StructField<'s> {
 	r#type: usize
 }
 
+#[derive(Debug)]
 pub struct Function<'s> {
 	name: IStr<'s>,
-	block: Scope<'s>
+	code: Code<'s>
 }
 
+#[derive(Debug)]
+pub struct Code<'s> {
+	scope: Scope<'s>
+}
+
+#[derive(Debug)]
 pub struct Scope<'s> {
 	types: HashMap<usize, Type<'s>>,
 	functions: HashMap<usize, Function<'s>>
@@ -85,28 +95,23 @@ impl<T> IDBuilder<T>
 	}
 }
 
-pub fn construct_main_representation(block: &Block) {
-	let mut type_ids = IDBuilder::<usize>::new();
-
+pub fn construct_main_representation(block: &Block) -> Code<'static> {
 	// Identify types.
-	let types = block.0.iter()
-		.fold(HashMap::new(), |mut types, statement| {
-			if let Statement::DataItem(data) = statement
-				{types.insert(data.name(), (type_ids.next(), data));}
-			types
-		});
-
-	//println!("IDENTIFIED: {:#?}", types);
+	let mut type_ids = IDBuilder::<usize>::new();
+	let types: HashMap<_, _> = block.0.iter()
+		.filter_map(Statement::data_item_ref)
+		.map(|data| (data.name(), (type_ids.next(), data)))
+		.collect();
 
 	// Identify field types.
-	let types: HashMap<_, _> = types.values()
+	let types = types.values()
 		.map(|(id, data)| (
 			*id,
 			match data {
 				DataItem::Single(variant) => {
 					let (name, format) =
 						construct_data_representation(variant, &types);
-					Type {name, format}
+					Type::User {name, format}
 				},
 
 				DataItem::Multiple {name, variants} => {
@@ -119,7 +124,7 @@ pub fn construct_main_representation(block: &Block) {
 						})
 						.collect();
 
-					Type {
+					Type::User {
 						name: (PhantomData, name.clone()),
 						format: DataFormat::Named {
 							fields: HashMap::new(),
@@ -131,7 +136,18 @@ pub fn construct_main_representation(block: &Block) {
 		))
 		.collect();
 
-	println!("MAIN IR: {:#?}", types);
+	// Identify functions.
+	let mut function_ids = IDBuilder::new();
+	let functions = block.0.iter()
+		.filter_map(Statement::function_item_ref)
+		.map(|function| Function {
+			name: (PhantomData, function.name.clone()),
+			code: construct_main_representation(&function.body)
+		})
+		.map(|function| (function_ids.next(), function))
+		.collect();
+
+	Code {scope: Scope {types, functions}}
 }
 
 pub fn construct_data_representation<V>(variant: &DataVariant,
