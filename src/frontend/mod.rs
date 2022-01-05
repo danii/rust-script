@@ -14,6 +14,15 @@ pub enum Type<'s> {
 	Integer
 }
 
+impl<'s> Type<'s> {
+	pub fn format_ref(&self) -> Option<&DataFormat<'s>> {
+		match self {
+			Self::User {format} => Some(format),
+			_ => None
+		}
+	}
+}
+
 #[derive(Debug)]
 pub enum GenericFormat<'s, V> {
 	Marker,
@@ -29,7 +38,7 @@ pub enum GenericFormat<'s, V> {
 pub type DataFormat<'s> =
 	GenericFormat<'s, HashMap<IStr<'s>, EnumVariantFormat<'s>>>;
 
-type EnumVariantFormat<'s> =
+pub type EnumVariantFormat<'s> =
 	GenericFormat<'s, ()>;
 
 #[derive(Debug)]
@@ -39,12 +48,12 @@ pub struct Function<'s> {
 
 #[derive(Debug)]
 pub struct Code<'s> {
-	scope: Scope<'s>
+	pub scope: Scope<'s>
 }
 
 #[derive(Debug, Default)]
 pub struct Scope<'s> {
-	types: HashMap<IStr<'s>, Type<'s>>,
+	pub types: HashMap<IStr<'s>, Type<'s>>,
 	functions: HashMap<IStr<'s>, Function<'s>>
 }
 
